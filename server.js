@@ -8,7 +8,7 @@ const fs = require("fs");
 
 const app = express();
 const port = process.env.PORT || 3000;
-const upload = multer({ dest: "uploads/" });
+
 
 app.use(cors());
 app.use(express.json());
@@ -37,23 +37,9 @@ sql.connect(config)
   .catch(err => console.error('❌ SQL Connection Error:', err));
 
 // ✅ POST API to insert user
-app.post("/loginentry", async (req, res) => {
-  const { uname, password } = req.body;
-  try {
-    const result = await sql.query`
-      INSERT INTO users (user_id, password) 
-      VALUES (${uname}, ${password})`;
-      console.log(`Values Update : ${uname}`);
-
-    res.status(201).json({ success: true, message: "User inserted successfully" });
-  } catch (err) {
-    console.error("❌ Error inserting user:", err);
-    res.status(500).json({ success: false, message: "Database error" });
-  }
-});
 
 app.get("/", async (req,res)=>{
-  res.send("Hi From Backend")
+  res.send("Hi From Backend This is Balaji")
   
 })
 
