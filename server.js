@@ -19,22 +19,6 @@ app.use(bodyParser.urlencoded({ extended: true })); // handles form data
 
 app.use('/public',express.static(__dirname+"/public"))
 
-// Azure SQL config
-const config = {
-  user: 'root1',
-  password: 'Nbalaji@2004',
-  server: 'sanchari.database.windows.net',
-  database: 'Users',
-  options: {
-    encrypt: true,
-    trustServerCertificate: false,
-  },
-};
-
-// Connect once when server starts
-sql.connect(config)
-  .then(() => console.log('✅ Connected to Azure SQL Database'))
-  .catch(err => console.error('❌ SQL Connection Error:', err));
 
 // ✅ POST API to insert user
 
