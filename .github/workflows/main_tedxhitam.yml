@@ -25,15 +25,9 @@ jobs:
       - name: Build app (if needed)
         run: npm run build --if-present
 
-      - name: Login to Azure
-        uses: azure/login@v2
-        with:
-          client-id: 3021bfad-19ed-4d0c-b14e-f48361fd16ac
-          tenant-id: 64e1f0f0-98a4-4bd7-83e3-c038d0e9a843
-          subscription-id: 0edb838c-45e0-4161-849f-075234dfc403
-
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: 'TEDxHITAM'
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: .
