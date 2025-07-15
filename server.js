@@ -92,6 +92,10 @@ app.post("/api/booking", upload.single("idCard"), (req, res) => {
   }
 });
 
+app.get('/',(req,res)=>{
+  res.send("hii");
+})
+
 // 🔍 404 handler
 app.use((req, res) => {
   res.status(404).json({
@@ -100,9 +104,7 @@ app.use((req, res) => {
   });
 });
 
-app.get('/',(req,res)=>{
-  res.send("hii");
-})
+
 
 // 💥 Global error handler
 app.use((err, req, res, next) => {
