@@ -98,6 +98,10 @@ app.use((req, res) => {
   });
 });
 
+app.get('/',(req,res)=>{
+  res.send("hii");
+})
+
 // 💥 Global error handler
 app.use((err, req, res, next) => {
   console.error("💥 Global Error:", err.stack);
