@@ -3,49 +3,72 @@ const multer = require("multer");
 const mysql = require("mysql2");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs");
+const ftp = require("basic-ftp");
 require("dotenv").config();
-
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static('uploads')); // Serve uploaded files
+app.use('/uploads', express.static('uploads'));
 
-// 🔐 Multer storage setup
+// === 🗂 Multer setup (temp upload folder) ===
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, "uploads/"); // Folder must exist
+    cb(null, "uploads/"); // temp local dir (must exist!)
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname);
-    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+    const rollNo = req.body.rollNo || "unknown";
+    cb(null, `${rollNo}${ext}`);
   },
 });
-
 const upload = multer({ storage });
 
-// 🔌 MySQL connection
+// === 💾 MySQL connection ===
 const db = mysql.createConnection({
-  host: 'auth-db1326.hstgr.io',
-  user: 'u287432907_admin',
-  password: 'Hitam@2025',
-  database: 'u287432907_TEDx2025',
+  host: "auth-db1326.hstgr.io",
+  user: "u287432907_admin",
+  password: "Hitam@2025",
+  database: "u287432907_TEDx2025",
 });
-
 db.connect(err => {
   if (err) {
     console.error("❌ MySQL connection failed:", err);
-    process.exit(1); // Stop server if DB fails
+    process.exit(1);
   }
-  console.log("✅ MySQL Connected");
+  console.log("✅ MySQL connected");
 });
 
-// 🚀 Booking API
-app.post("/api/booking", upload.single("idCard"), (req, res) => {
+// === 📤 FTP Upload to Hostinger ===
+async function uploadToHostinger(localPath, remoteFilename) {
+  const client = new ftp.Client();
+  client.ftp.verbose = true;
+
+  try {
+    await client.access({
+      host: "ftp://46.28.45.150",
+      user: "u287432907",
+      password: "Hitam@2025",
+      secure: false
+    });
+
+    const remotePath = `/public_html/uploads/${remoteFilename}`;
+    await client.uploadFrom(localPath, remotePath);
+    console.log("✅ File uploaded to Hostinger:", remotePath);
+    return remotePath;
+  } catch (err) {
+    console.error("❌ FTP upload failed:", err.message);
+    throw err;
+  } finally {
+    client.close();
+  }
+}
+
+// === 🚀 Booking endpoint ===
+app.post("/api/booking", upload.single("idCard"), async (req, res) => {
   try {
     const {
       name,
@@ -56,12 +79,26 @@ app.post("/api/booking", upload.single("idCard"), (req, res) => {
       mobile,
       txnId,
       userType,
-      seatNo,
+      seatNo
     } = req.body;
 
-    const idCardPath = req.file ? req.file.path : null;
+    if (!req.file) {
+      return res.status(400).json({ error: "ID Card is required." });
+    }
 
-    const sql = `INSERT INTO bookings 
+    const localPath = req.file.path;
+    const remoteFilename = req.file.filename;
+
+    const remotePath = await uploadToHostinger(localPath, remoteFilename);
+
+    // Optional: delete local temp file
+    fs.unlink(localPath, (err) => {
+      if (err) console.error("⚠️ Could not delete local file:", err);
+    });
+
+    // Insert into MySQL
+    const sql = `
+      INSERT INTO bookings
       (name, roll_no, branch, year, email, mobile, txn_id, user_type, seat_no, id_card_path)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
@@ -75,38 +112,37 @@ app.post("/api/booking", upload.single("idCard"), (req, res) => {
       txnId,
       userType,
       seatNo,
-      idCardPath,
+      remotePath
     ];
 
     db.query(sql, values, (err, result) => {
       if (err) {
-        console.error("❌ DB Insert Error:", err);
+        console.error("❌ MySQL insert error:", err);
         return res.status(500).json({ error: "Database error" });
       }
-
-      res.json({ message: "✅ Booking submitted successfully!" });
+      res.json({ message: "✅ Booking successful!" });
     });
-  } catch (error) {
-    console.error("❌ Server error:", error);
-    res.status(500).json({ error: "Internal server error" });
+
+  } catch (err) {
+    console.error("❌ Booking error:", err);
+    res.status(500).json({ error: "Server error", detail: err.message });
   }
 });
 
-app.get('/',(req,res)=>{
-  res.send("hii");
-})
+// Default route
+app.get("/", (req, res) => {
+  res.send("🎉 TEDx Booking API is running.");
+});
 
-// 🔍 404 handler
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({
-    error: "❌ Route not found",
+    error: "Route not found",
     message: `Cannot ${req.method} ${req.originalUrl}`,
   });
 });
 
-
-
-// 💥 Global error handler
+// Error handler
 app.use((err, req, res, next) => {
   console.error("💥 Global Error:", err.stack);
   res.status(500).json({
@@ -115,7 +151,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 🌐 Start server
+// Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
