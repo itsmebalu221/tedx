@@ -1,73 +1,68 @@
 const express = require("express");
 const multer = require("multer");
 const mysql = require("mysql2");
+const ftp = require("basic-ftp");
 const cors = require("cors");
 const path = require("path");
-const fs = require("fs");
-const ftp = require("basic-ftp");
-require("dotenv").config();
+const { Readable } = require("stream"); // 👈 Needed for FTP upload
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// 🛡️ Middleware
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static('uploads'));
 
-// === 🗂 Multer setup (temp upload folder) ===
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/"); // temp local dir (must exist!)
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const rollNo = req.body.rollNo || "unknown";
-    cb(null, `${rollNo}${ext}`);
-  },
-});
+// 🗂️ Use Multer with memory storage
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// === 💾 MySQL connection ===
+// 🐬 MySQL Database Config
 const db = mysql.createConnection({
-  host: "auth-db1326.hstgr.io",
-  user: "u287432907_admin",
-  password: "Hitam@2025",
-  database: "u287432907_TEDx2025",
+  host: 'auth-db1326.hstgr.io',
+  user: 'u287432907_admin',
+  password: 'Hitam@2025',
+  database: 'u287432907_TEDx2025',
 });
+
 db.connect(err => {
   if (err) {
     console.error("❌ MySQL connection failed:", err);
     process.exit(1);
   }
-  console.log("✅ MySQL connected");
+  console.log("✅ MySQL Connected");
 });
 
-// === 📤 FTP Upload to Hostinger ===
-async function uploadToHostinger(localPath, remoteFilename) {
+// 📤 FTP Upload Function
+async function uploadToFTP(buffer, remoteFilename) {
   const client = new ftp.Client();
-  client.ftp.verbose = true;
+  client.ftp.verbose = false;
 
   try {
     await client.access({
-      host: "ftp://46.28.45.150",
+      host: "46.28.45.150",
+      port: 21,
       user: "u287432907",
-      password: "Hitam@2025",
-      secure: false
+      password: "Hitam@2025", // 🔒 Replace later with .env
+      secure: false,
     });
 
-    const remotePath = `/public_html/uploads/${remoteFilename}`;
-    await client.uploadFrom(localPath, remotePath);
-    console.log("✅ File uploaded to Hostinger:", remotePath);
-    return remotePath;
+    const remoteDir = ".";
+    await client.ensureDir(remoteDir);
+
+    const stream = Readable.from(buffer); // ✅ Convert Buffer to stream
+    await client.uploadFrom(stream, `${remoteFilename}`);
+
+    return `${remoteFilename}`;
   } catch (err) {
-    console.error("❌ FTP upload failed:", err.message);
+    console.error("❌ FTP Upload Error:", err.message);
     throw err;
   } finally {
     client.close();
   }
 }
 
-// === 🚀 Booking endpoint ===
+// 📥 Booking API
 app.post("/api/booking", upload.single("idCard"), async (req, res) => {
   try {
     const {
@@ -79,79 +74,53 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
       mobile,
       txnId,
       userType,
-      seatNo
+      seatNo,
     } = req.body;
 
     if (!req.file) {
-      return res.status(400).json({ error: "ID Card is required." });
+      return res.status(400).json({ error: "ID Card file missing" });
     }
 
-    const localPath = req.file.path;
-    const remoteFilename = req.file.filename;
+    const remoteFilename = `${rollNo.toUpperCase()}.jpg`; // 🔤 Filename is Roll No
 
-    const remotePath = await uploadToHostinger(localPath, remoteFilename);
+    // 📤 Upload to FTP
+    const ftpPath = await uploadToFTP(req.file.buffer, remoteFilename);
 
-    // Optional: delete local temp file
-    fs.unlink(localPath, (err) => {
-      if (err) console.error("⚠️ Could not delete local file:", err);
-    });
-
-    // Insert into MySQL
-    const sql = `
-      INSERT INTO bookings
+    // 💾 Insert into MySQL
+    const sql = `INSERT INTO bookings 
       (name, roll_no, branch, year, email, mobile, txn_id, user_type, seat_no, id_card_path)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     const values = [
-      name,
-      rollNo,
-      branch,
-      year,
-      email,
-      mobile,
-      txnId,
-      userType,
-      seatNo,
-      remotePath
+      name, rollNo, branch, year, email, mobile, txnId, userType, seatNo, ftpPath,
     ];
 
     db.query(sql, values, (err, result) => {
       if (err) {
-        console.error("❌ MySQL insert error:", err);
-        return res.status(500).json({ error: "Database error" });
+        console.error("❌ DB Insert Error:", err);
+        return res.status(500).json({ error: "Database insert error" });
       }
-      res.json({ message: "✅ Booking successful!" });
+
+      res.json({ message: "✅ Booking successful" });
     });
 
-  } catch (err) {
-    console.error("❌ Booking error:", err);
-    res.status(500).json({ error: "Server error", detail: err.message });
+  } catch (error) {
+    console.error("💥 Global Error:", error);
+    res.status(500).json({ error: "❌ Server error during booking" });
   }
 });
 
-// Default route
+// ✅ Root route
 app.get("/", (req, res) => {
-  res.send("🎉 TEDx Booking API is running.");
+  res.send("🚀 TEDx API is live");
 });
 
-// 404 handler
+// ❌ 404 handler
 app.use((req, res) => {
-  res.status(404).json({
-    error: "Route not found",
-    message: `Cannot ${req.method} ${req.originalUrl}`,
-  });
+  res.status(404).json({ error: "❌ Route not found" });
 });
 
-// Error handler
-app.use((err, req, res, next) => {
-  console.error("💥 Global Error:", err.stack);
-  res.status(500).json({
-    error: "❌ Server Error",
-    message: err.message || "Something went wrong",
-  });
-});
-
-// Start server
+// 🚀 Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
