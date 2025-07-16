@@ -51,13 +51,13 @@ async function uploadToFTP(buffer, remoteFilename) {
       secure: false,
     });
 
-    const remoteDir = "public_html"; // Make sure this directory exists
+    const remoteDir = "."; // Make sure this directory exists
     await client.ensureDir(remoteDir);
 
     const stream = Readable.from(buffer); // Convert Buffer to readable stream
-    await client.uploadFrom(stream, `${remoteDir}/${remoteFilename}`);
+    await client.uploadFrom(stream, `${remoteFilename}`);
 
-    return `${remoteDir}/${remoteFilename}`;
+    return `${remoteFilename}`;
   } catch (err) {
     console.error("❌ FTP Upload Error:", err.message);
     throw err;
