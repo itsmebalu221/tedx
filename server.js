@@ -85,7 +85,7 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
       return res.status(400).json({ error: "ID Card file missing" });
     }
 
-    const remoteFilename = `${rollNo.toUpperCase()}.jpg`;
+    const remoteFilename = `${email)}.jpg`;
     const ftpPath = await uploadToFTP(req.file.buffer, remoteFilename);
 
     const sql = `INSERT INTO bookings 
