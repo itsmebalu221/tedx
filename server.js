@@ -44,9 +44,9 @@ async function uploadToFTP(buffer, remoteFilename) {
 
   try {
     await client.access({
-      host: "46.28.45.150",      // Without ftp://
+      host: "ftp.tedxhitam.com",      // Without ftp://
       port: 21,
-      user: "u287432907",
+      user: "u287432907.admin",
       password: "Hitam@2025",
       secure: false,
     });
