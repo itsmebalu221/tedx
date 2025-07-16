@@ -18,12 +18,16 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // 🐬 MySQL Database Config
-const db = mysql.createConnection({
+const db = mysql.createPool({
   host: 'auth-db1326.hstgr.io',
   user: 'u287432907_admin',
   password: 'Hitam@2025',
   database: 'u287432907_TEDx2025',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
+
 
 db.connect(err => {
   if (err) {
@@ -96,13 +100,12 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
     ];
 
     db.query(sql, values, (err, result) => {
-      if (err) {
-        console.error("❌ DB Insert Error:", err);
-        return res.status(500).json({ error: "Database insert error" });
-      }
-
-      res.json({ message: "✅ Booking successful" });
-    });
+  if (err) {
+    console.error("❌ DB Insert Error:", err);
+    return res.status(500).json({ error: "Database insert error" });
+  }
+  res.json({ message: "✅ Booking successful" });
+});
 
   } catch (error) {
     console.error("💥 Global Error:", error);
