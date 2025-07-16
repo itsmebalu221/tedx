@@ -4,7 +4,7 @@ const mysql = require("mysql2");
 const ftp = require("basic-ftp");
 const cors = require("cors");
 const path = require("path");
-const { Readable } = require("stream"); // 👈 Needed for FTP upload
+const { Readable } = require("stream");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -13,11 +13,11 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// 🗂️ Use Multer with memory storage
+// 📦 Multer memory storage for in-memory file upload
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// 🐬 MySQL Database Config
+// 🐬 MySQL Pool Configuration
 const db = mysql.createPool({
   host: 'auth-db1326.hstgr.io',
   user: 'u287432907_admin',
@@ -25,39 +25,39 @@ const db = mysql.createPool({
   database: 'u287432907_TEDx2025',
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
 });
 
-
-db.connect(err => {
+// ✅ Optional DB ping to check connection at startup
+db.query('SELECT 1', (err) => {
   if (err) {
     console.error("❌ MySQL connection failed:", err);
     process.exit(1);
   }
-  console.log("✅ MySQL Connected");
+  console.log("✅ MySQL Pool is ready");
 });
 
-// 📤 FTP Upload Function
+// 📤 Upload image to Hostinger FTP server
 async function uploadToFTP(buffer, remoteFilename) {
   const client = new ftp.Client();
   client.ftp.verbose = false;
 
   try {
     await client.access({
-      host: "46.28.45.150",
+      host: "46.28.45.150",      // Without ftp://
       port: 21,
       user: "u287432907",
-      password: "Hitam@2025", // 🔒 Replace later with .env
+      password: "Hitam@2025",
       secure: false,
     });
 
-    const remoteDir = ".";
+    const remoteDir = "public_html"; // Make sure this directory exists
     await client.ensureDir(remoteDir);
 
-    const stream = Readable.from(buffer); // ✅ Convert Buffer to stream
-    await client.uploadFrom(stream, `${remoteFilename}`);
+    const stream = Readable.from(buffer); // Convert Buffer to readable stream
+    await client.uploadFrom(stream, `${remoteDir}/${remoteFilename}`);
 
-    return `${remoteFilename}`;
+    return `${remoteDir}/${remoteFilename}`;
   } catch (err) {
     console.error("❌ FTP Upload Error:", err.message);
     throw err;
@@ -85,27 +85,34 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
       return res.status(400).json({ error: "ID Card file missing" });
     }
 
-    const remoteFilename = `${rollNo.toUpperCase()}.jpg`; // 🔤 Filename is Roll No
-
-    // 📤 Upload to FTP
+    const remoteFilename = `${rollNo.toUpperCase()}.jpg`;
     const ftpPath = await uploadToFTP(req.file.buffer, remoteFilename);
 
-    // 💾 Insert into MySQL
     const sql = `INSERT INTO bookings 
       (name, roll_no, branch, year, email, mobile, txn_id, user_type, seat_no, id_card_path)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     const values = [
-      name, rollNo, branch, year, email, mobile, txnId, userType, seatNo, ftpPath,
+      name,
+      rollNo,
+      branch,
+      year,
+      email,
+      mobile,
+      txnId,
+      userType,
+      seatNo,
+      ftpPath,
     ];
 
     db.query(sql, values, (err, result) => {
-  if (err) {
-    console.error("❌ DB Insert Error:", err);
-    return res.status(500).json({ error: "Database insert error" });
-  }
-  res.json({ message: "✅ Booking successful" });
-});
+      if (err) {
+        console.error("❌ DB Insert Error:", err);
+        return res.status(500).json({ error: "Database insert error" });
+      }
+
+      res.json({ message: "✅ Booking successful!" });
+    });
 
   } catch (error) {
     console.error("💥 Global Error:", error);
@@ -118,7 +125,7 @@ app.get("/", (req, res) => {
   res.send("🚀 TEDx API is live");
 });
 
-// ❌ 404 handler
+// ❌ 404 route
 app.use((req, res) => {
   res.status(404).json({ error: "❌ Route not found" });
 });
