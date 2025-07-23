@@ -92,8 +92,9 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
       txnId,
       userType,
       seatNo,
-      oclg,
       passout,
+      Designation,
+      EmpCom,
     } = req.body;
 
     if (!req.file) {
@@ -171,7 +172,7 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
 
       case 'faculty': {
         const sql = `INSERT INTO hitam_fac 
-          (name, hitam_id, email, phone, txn_id, user_type, seat_no, file_path)
+          (name, dept, email, phone, txn_id, user_type, seat_no, file_path)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
         const values = [name, rollNo, email, mobile, txnId, userType, seatNo, ftpPath];
         db.query(sql, values, insertCallback);
@@ -180,18 +181,18 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
 
       case 'alumni': {
         const sql = `INSERT INTO hitam_alu 
-          (name, roll_no, email, phone, passed_year, txn_id, user_type, seat_no, file_path)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        const values = [name, rollNo, email, mobile, passout, txnId, userType, seatNo, ftpPath];
+          (name,  email, phone, passed_year, txn_id, user_type, seat_no,des,empcom, file_path)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?,?,?)`;
+        const values = [name, email, mobile, passout, txnId, userType, seatNo ,Designation,EmpCom,ftpPath];
         db.query(sql, values, insertCallback);
         break;
       }
 
       case 'outside': {
         const sql = `INSERT INTO outside_hitam 
-          (name, clg_id, clg_name, email, phone, txn_id, user_type, seat_no, file_path)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        const values = [name, rollNo, oclg, email, mobile, txnId, userType, seatNo, ftpPath];
+          (name,dept, email, phone, txn_id, user_type, seat_no, file_path)
+          VALUES ( ?, ?, ?, ?, ?, ?, ?, ?)`;
+        const values = [name, rollNo, email, mobile, txnId, userType, seatNo, ftpPath];
         db.query(sql, values, insertCallback);
         break;
       }
@@ -199,6 +200,85 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
       default:
         return res.status(400).json({ error: "Invalid userType" });
     }
+  } catch (error) {
+    console.error("💥 Global Error:", error);
+    res.status(500).json({ error: "❌ Server error during booking" });
+  }
+});
+
+app.post("/api/bookingExternal", async (req, res) => {
+  try {
+    const {
+      name,
+      email,
+      mobile,
+      txnId,
+      userType,
+      seatNo,
+      Designation,
+      Organization,
+    } = req.body;
+    // ✅ Generate QR Code (with encoded data)
+    const qrData = JSON.stringify({ name, email, seatNo, txnId });
+    const qrBase64 = await QRCode.toDataURL(qrData);
+
+    // ✅ Save to DB
+    const insertCallback = async (err, result) => {
+      if (err) {
+        console.error("❌ DB Insert Error:", err);
+        return res.status(500).json({ error: "Database insert error" });
+      }
+
+      // ✅ Send Email
+      await transporter.sendMail({
+        from: '"TEDxHITAM" <info@tedxhitam.com>',
+        to: email,
+        subject: "🎟 Your TEDxHITAM 2025 Ticket is Here!",
+        html: `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; background-color: #000; color: #fff; border-radius: 10px; overflow: hidden; border: 2px solid #c71f37;">
+  <div style="padding: 20px; background-color: #c71f37; text-align: center;">
+    <h1 style="margin: 0; font-size: 32px;">🎟 TEDxHITAM 2025</h1>
+    <p style="margin: 5px 0 0;">Access the Invisible</p>
+  </div>
+  <div style="padding: 30px; background-color: #111;">
+    <h2 style="margin: 0 0 10px;">Hi ${name},</h2>
+    <p>Your booking for <strong>TEDxHITAM</strong> has been confirmed! Below are your ticket details:</p>
+    <table style="margin-top: 20px; width: 100%; font-size: 16px;">
+      <tr><td><strong>👤 Name:</strong></td><td>${name}</td></tr>
+      <tr><td><strong>📮 Email:</strong></td><td>${email}</td></tr>
+      <tr><td><strong>🎫 Seat No:</strong></td><td>${seatNo}</td></tr>
+      <tr><td><strong>💳 Txn ID:</strong></td><td>${txnId}</td></tr>
+    </table>
+    <div style="text-align: center; margin: 30px 0;">
+      <img src="cid:qrCode" alt="QR Code" style="width: 200px; height: 200px; border: 4px solid #c71f37; padding: 5px; background: #fff;" />
+      <p style="margin-top: 10px; font-size: 14px;">📱 Show this QR code at the entrance</p>
+    </div>
+    <p>📍 <strong>Date:</strong> July 27, 2025<br/>
+       🕒 <strong>Time:</strong> 3:00 PM onwards<br/>
+       📍 <strong>Venue:</strong> HITAM Auditorium</p>
+    <p style="text-align: center; color: #aaa;">Let’s rewrite the rules of reality. 🚀</p>
+    <p style="text-align: center; font-style: italic;">– Team TEDxHITAM</p>
+  </div>
+</div>
+        `,
+        attachments: [
+          {
+            filename: 'qr.png',
+            cid: 'qrCode',
+            path: qrBase64,
+          }
+        ]
+      });
+
+      return res.json({ message: "✅ Booking successful & Email sent!" });
+    };
+
+    // 👤 Handle Insertion Based on userType
+    const sql = `INSERT INTO bookingsExternal 
+          (name, email, mobile, txn_id, user_type, seat_no,Organization,Designation)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+        const values = [name, email, mobile, txnId, userType, seatNo,Organization,Designation ];
+        db.query(sql, values, insertCallback);
   } catch (error) {
     console.error("💥 Global Error:", error);
     res.status(500).json({ error: "❌ Server error during booking" });
