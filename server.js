@@ -302,7 +302,7 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
 app.post("/api/bookingExternal", upload.none(),async (req, res) => {
   try {
     const {
-      Ename,
+      name,
       email,
       mobile,
       txnId,
@@ -312,14 +312,14 @@ app.post("/api/bookingExternal", upload.none(),async (req, res) => {
       Organization,
     } = req.body;
 
-    const qrData = JSON.stringify({ Ename, email, seatNo, txnId });
+    const qrData = JSON.stringify({ name, email, seatNo, txnId });
     const qrBase64 = await QRCode.toDataURL(qrData);
 
     // ✅ Insert into MySQL
     const sql = `INSERT INTO bookingsExternal 
       (name, email, mobile, txn_id, user_type, seat_no, Organization, Designation)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
-    const values = [Ename, email, mobile, txnId, userType, seatNo, Organization, Designation];
+    const values = [name, email, mobile, txnId, userType, seatNo, Organization, Designation];
 
     db.query(sql, values, async (err, result) => {
       if (err) {
@@ -339,10 +339,10 @@ app.post("/api/bookingExternal", upload.none(),async (req, res) => {
     <p style="margin: 5px 0 0;">Access the Invisible</p>
   </div>
   <div style="padding: 30px; background-color: #111;">
-    <h2 style="margin: 0 0 10px;">Hi ${Ename},</h2>
+    <h2 style="margin: 0 0 10px;">Hi ${name},</h2>
     <p>Your booking for <strong>TEDxHITAM</strong> has been confirmed! Below are your ticket details:</p>
     <table style="margin-top: 20px; width: 100%; font-size: 16px;">
-      <tr><td><strong>👤 Name:</strong></td><td>${Ename}</td></tr>
+      <tr><td><strong>👤 Name:</strong></td><td>${name}</td></tr>
       <tr><td><strong>📮 Email:</strong></td><td>${email}</td></tr>
       <tr><td><strong>🎫 Seat No:</strong></td><td>${seatNo}</td></tr>
       <tr><td><strong>💳 Txn ID:</strong></td><td>${txnId}</td></tr>
