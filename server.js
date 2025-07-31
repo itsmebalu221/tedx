@@ -373,7 +373,7 @@ app.post("/api/bookingExternal", upload.none(),async (req, res) => {
         ]
       });
 
-      res.json({ message: "✅ Booking successful & Email sent!" });
+      res.json({ message: "✅ Booking successful and Email sent!" });
     });
   } catch (error) {
     console.error("💥 Global Error:", error);
