@@ -59,8 +59,36 @@ async function uploadToFTP(buffer, remoteFilename) {
     await client.access({
       host: "ftp.tedxhitam.com",
       port: 21,
-      user: "u287432907.admin",
-      password: "Hitam@2025",
+      user: "u287432907.adminID",
+      password: "Hitam@2026",
+      secure: false,
+    });
+
+    const remoteDir = ".";
+    await client.ensureDir(remoteDir);
+
+    const stream = Readable.from(buffer);
+    await client.uploadFrom(stream, remoteFilename);
+
+    return remoteFilename;
+  } catch (err) {
+    console.error("❌ FTP Upload Error:", err.message);
+    throw err;
+  } finally {
+    client.close();
+  }
+}
+
+async function uploadToFTPPay(buffer, remoteFilename) {
+  const client = new ftp.Client();
+  client.ftp.verbose = false;
+
+  try {
+    await client.access({
+      host: "ftp.tedxhitam.com",
+      port: 21,
+      user: "u287432907.adminPAY",
+      password: "Hitam@2026",
       secure: false,
     });
 
@@ -80,7 +108,10 @@ async function uploadToFTP(buffer, remoteFilename) {
 }
 
 // 📥 Booking Endpoint
-app.post("/api/booking", upload.single("idCard"), async (req, res) => {
+app.post("/api/booking", upload.fields([
+  { name: "idCard", maxCount: 1 },
+  { name: "paymentScreenshot", maxCount: 1 }
+]), async (req, res)=> {
   try {
     const {
       name,
@@ -97,12 +128,18 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
       EmpCom,
     } = req.body;
 
-    if (!req.file) {
-      return res.status(400).json({ error: "ID Card file missing" });
-    }
+    
 
-    const remoteFilename = `${email}.jpg`;
-    const ftpPath = await uploadToFTP(req.file.buffer, remoteFilename);
+      // ID Card upload
+    const idCardBuffer = req.files["idCard"]?.[0]?.buffer;
+    const idCardFilename = `${email}_id.jpg`;
+    const ftpPath = await uploadToFTP(idCardBuffer, idCardFilename);
+
+    // Payment Screenshot upload
+    const paymentBuffer = req.files["paymentScreenshot"]?.[0]?.buffer;
+    const paymentFilename = `${email}_payment.jpg`;
+    const paymentPath = await uploadToFTPPay(paymentBuffer, paymentFilename);
+
 
     // ✅ Generate QR Code (with encoded data)
     const qrData = JSON.stringify({ name, email, seatNo, txnId });
@@ -183,6 +220,13 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
       Please keep your QR code private—sharing it with others may compromise your entry.
     </p>
     <a 
+  href="https://chat.whatsapp.com/IwyizdjHjfIFdSdgVHax0j"
+  target="_blank"
+  style="display:inline-block; padding:12px 30px; border-radius:25px; background:linear-gradient(90deg,#c71f37,#181823); color:#fff; font-weight:700; text-decoration:none; font-family:'Montserrat',Arial,sans-serif; margin:12px auto; box-shadow:0 2px 8px rgba(199,31,55,0.2);"
+>
+  Join WhatsApp Group
+</a>
+    <a 
   href="https://calendar.google.com/calendar/render?action=TEMPLATE&text=TEDxHITAM+2025+-+Invisible&dates=20250920T043000Z/20250920T103000Z&details=Join+us+for+TEDxHITAM's+3rd+edition+under+the+theme+'Invisible'.+Venue:+HITAM+Auditorium&location=HITAM+Auditorium&sf=true&output=xml"
   target="_blank"
   style="display:inline-block; padding:12px 30px; border-radius:25px; background:linear-gradient(90deg,#c71f37,#181823); color:#fff; font-weight:700; text-decoration:none; font-family:'Montserrat',Arial,sans-serif; margin:12px auto; box-shadow:0 2px 8px rgba(199,31,55,0.2);"
@@ -256,36 +300,36 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
     switch (userType) {
       case 'student': {
         const sql = `INSERT INTO bookings 
-          (name, roll_no, branch, year, email, mobile, txn_id, user_type, seat_no, id_card_path)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        const values = [name, rollNo, branch, year, email, mobile, txnId, userType, seatNo, ftpPath];
+          (name, roll_no, branch, year, email, mobile, txn_id, user_type, seat_no, id_card_path,payment_path)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)`;
+        const values = [name, rollNo, branch, year, email, mobile, txnId, userType, seatNo, ftpPath,paymentPath];
         db.query(sql, values, insertCallback);
         break;
       }
 
       case 'faculty': {
         const sql = `INSERT INTO hitam_fac 
-          (name, dept, email, phone, txn_id, user_type, seat_no, file_path)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
-        const values = [name, rollNo, email, mobile, txnId, userType, seatNo, ftpPath];
+          (name, dept, email, phone, txn_id, user_type, seat_no, file_path, payment_path)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?,?)`;
+        const values = [name, rollNo, email, mobile, txnId, userType, seatNo, ftpPath,paymentPath];
         db.query(sql, values, insertCallback);
         break;
       }
 
       case 'alumni': {
         const sql = `INSERT INTO hitam_alu 
-          (name,  email, phone, passed_year, txn_id, user_type, seat_no,des,empcom, file_path)
+          (name,  email, phone, passed_year, txn_id, user_type, seat_no,des,empcom,payment_path)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?,?,?)`;
-        const values = [name, email, mobile, passout, txnId, userType, seatNo ,Designation,EmpCom,ftpPath];
+        const values = [name, email, mobile, passout, txnId, userType, seatNo ,Designation,EmpCom,paymentPath];
         db.query(sql, values, insertCallback);
         break;
       }
 
       case 'outside': {
         const sql = `INSERT INTO outside_hitam 
-          (name,dept, email, phone, txn_id, user_type, seat_no, file_path)
-          VALUES ( ?, ?, ?, ?, ?, ?, ?, ?)`;
-        const values = [name, rollNo, email, mobile, txnId, userType, seatNo, ftpPath];
+          (name,dept, email, phone, txn_id, user_type, seat_no, file_path,payment_path)
+          VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        const values = [name, rollNo, email, mobile, txnId, userType, seatNo, ftpPath, paymentPath];
         db.query(sql, values, insertCallback);
         break;
       }
@@ -299,7 +343,7 @@ app.post("/api/booking", upload.single("idCard"), async (req, res) => {
   }
 });
 
-app.post("/api/bookingExternal", async (req, res) => {
+app.post("/api/bookingExternal", upload.single("paymentScreenshot"),async (req, res) => {
   try {
     const {
       name,
@@ -311,18 +355,26 @@ app.post("/api/bookingExternal", async (req, res) => {
       Designation,
       Organization,
     } = req.body;
-    // ✅ Generate QR Code (with encoded data)
+
     const qrData = JSON.stringify({ name, email, seatNo, txnId });
     const qrBase64 = await QRCode.toDataURL(qrData);
 
-    // ✅ Save to DB
-    const insertCallback = async (err, result) => {
+    const remoteFilename = `${email}.jpg`;
+    const ftpPath = await uploadToFTPPay(req.file.buffer, remoteFilename);
+
+    // ✅ Insert into MySQL
+    const sql = `INSERT INTO bookingsExternal 
+      (name, email, mobile, txn_id, user_type, seat_no, Organization, Designation,paymentPath)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const values = [name, email, mobile, txnId, userType, seatNo, Organization, Designation,ftpPath];
+
+    db.query(sql, values, async (err, result) => {
       if (err) {
         console.error("❌ DB Insert Error:", err);
         return res.status(500).json({ error: "Database insert error" });
       }
 
-      // ✅ Send Email
+      // ✅ Send email with QR code
       await transporter.sendMail({
         from: '"TEDxHITAM" <info@tedxhitam.com>',
         to: email,
@@ -356,22 +408,15 @@ app.post("/api/bookingExternal", async (req, res) => {
         `,
         attachments: [
           {
-            filename: 'qr.png',
-            cid: 'qrCode',
-            path: qrBase64,
+            filename: "qr.png",
+            cid: "qrCode",
+            path: qrBase64
           }
         ]
       });
 
-      return res.json({ message: "✅ Booking successful & Email sent!" });
-    };
-
-    // 👤 Handle Insertion Based on userType
-    const sql = `INSERT INTO bookingsExternal 
-          (name, email, mobile, txn_id, user_type, seat_no,Organization,Designation)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
-        const values = [name, email, mobile, txnId, userType, seatNo,Organization,Designation ];
-        db.query(sql, values, insertCallback);
+      res.json({ message: "✅ Booking successful & Email sent!" });
+    });
   } catch (error) {
     console.error("💥 Global Error:", error);
     res.status(500).json({ error: "❌ Server error during booking" });
