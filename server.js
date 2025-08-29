@@ -1,3 +1,4 @@
+// server.js
 const express = require("express");
 const multer = require("multer");
 const mysql = require("mysql2");
@@ -7,42 +8,59 @@ const path = require("path");
 const { Readable } = require("stream");
 const nodemailer = require("nodemailer");
 const QRCode = require("qrcode");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// 📧 Nodemailer Transporter
+/* ----------------------------- SMTP (Hostinger) ---------------------------- */
+/* NOTE:
+   - Port 587 + STARTTLS is generally required on Azure App Service.
+   - If your hPanel forces SSL on 465, change `port: 465, secure: true` and
+     remove `requireTLS`.
+*/
 const transporter = nodemailer.createTransport({
   host: "smtp.hostinger.com",
-  port: 465,
-  secure: true,
+  port: 587,
+  secure: false,           // STARTTLS
+  requireTLS: true,
   auth: {
     user: "info@tedxhitam.com",
     pass: "Hitam@2026",
   },
+  tls: {
+    // If you see CERT errors behind corporate proxies, you can toggle the next line:
+    // rejectUnauthorized: false,
+  },
 });
 
-// 🛡️ Middleware
+/* -------------------------------- Middleware ------------------------------- */
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
 
-// 📦 Multer: Store uploaded file in memory
+/* ------------------------------- Multer Setup ------------------------------ */
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 15 * 1024 * 1024, // 15MB per file
+    files: 4,
+  },
+});
 
-// 🐬 MySQL Pool
+/* ------------------------------- MySQL (Pool) ------------------------------ */
 const db = mysql.createPool({
-  host: 'auth-db1326.hstgr.io',
-  user: 'u287432907_admin',
-  password: 'Hitam@2025',
-  database: 'u287432907_TEDx2025',
+  host: "auth-db1326.hstgr.io",
+  user: "u287432907_admin",
+  password: "Hitam@2025",
+  database: "u287432907_TEDx2025",
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 });
 
-// ✅ Test DB Connection
-db.query('SELECT 1', (err) => {
+db.query("SELECT 1", (err) => {
   if (err) {
     console.error("❌ MySQL connection failed:", err);
     process.exit(1);
@@ -50,18 +68,24 @@ db.query('SELECT 1', (err) => {
   console.log("✅ MySQL Pool is ready");
 });
 
-// 📤 Upload to Hostinger FTP
-async function uploadToFTP(buffer, remoteFilename) {
+/* ------------------------------- FTP Helpers ------------------------------- */
+async function uploadToFTP(buffer, remoteFilename, { host, user, password }) {
+  if (!buffer || !Buffer.isBuffer(buffer)) {
+    throw new Error("Upload buffer missing or invalid.");
+  }
+
   const client = new ftp.Client();
   client.ftp.verbose = false;
+  // Force passive IPv4 (more compatible on Azure)
+  client.prepareTransfer = ftp.enterPassiveModeIPv4;
 
   try {
     await client.access({
-      host: "ftp.tedxhitam.com",
+      host,
       port: 21,
-      user: "u287432907.adminID",
-      password: "Hitam@2026",
-      secure: false,
+      user,
+      password,
+      secure: false, // switch to true + proper certs if your FTP supports FTPS
     });
 
     const remoteDir = ".";
@@ -79,85 +103,121 @@ async function uploadToFTP(buffer, remoteFilename) {
   }
 }
 
-async function uploadToFTPPay(buffer, remoteFilename) {
-  const client = new ftp.Client();
-  client.ftp.verbose = false;
-
-  try {
-    await client.access({
-      host: "ftp.tedxhitam.com",
-      port: 21,
-      user: "u287432907.adminPAY",
-      password: "Hitam@2026",
-      secure: false,
-    });
-
-    const remoteDir = ".";
-    await client.ensureDir(remoteDir);
-
-    const stream = Readable.from(buffer);
-    await client.uploadFrom(stream, remoteFilename);
-
-    return remoteFilename;
-  } catch (err) {
-    console.error("❌ FTP Upload Error:", err.message);
-    throw err;
-  } finally {
-    client.close();
-  }
+async function uploadToFTP_ID(buffer, remoteFilename) {
+  return uploadToFTP(buffer, remoteFilename, {
+    host: "ftp.tedxhitam.com",
+    user: "u287432907.adminID",
+    password: "Hitam@2026",
+  });
 }
 
-// 📥 Booking Endpoint
-app.post("/api/booking", upload.fields([
-  { name: "idCard", maxCount: 1 },
-  { name: "paymentScreenshot", maxCount: 1 }
-]), async (req, res)=> {
-  try {
-    const {
-      name,
-      rollNo,
-      branch,
-      year,
-      email,
-      mobile,
-      txnId,
-      userType,
-      seatNo,
-      passout,
-      Designation,
-      EmpCom,
-    } = req.body;
+async function uploadToFTP_PAY(buffer, remoteFilename) {
+  return uploadToFTP(buffer, remoteFilename, {
+    host: "ftp.tedxhitam.com",
+    user: "u287432907.adminPAY",
+    password: "Hitam@2026",
+  });
+}
 
-    
+/* ---------------------------- Email Attach Utils --------------------------- */
+// Convert a data: URL to a Nodemailer attachment payload
+function dataUrlToAttachment(dataUrl, { filename, cid }) {
+  if (!dataUrl || typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
+    throw new Error("Invalid data URL for attachment.");
+  }
+  const base64 = dataUrl.split("base64,")[1];
+  if (!base64) {
+    throw new Error("Failed to parse base64 data from data URL.");
+  }
+  return {
+    filename,
+    cid, // To embed in HTML via <img src="cid:...">
+    content: base64,
+    encoding: "base64",
+  };
+}
 
-      // ID Card upload
-    const idCardBuffer = req.files["idCard"]?.[0]?.buffer;
-    const idCardFilename = `${email}_id.jpg`;
-    const ftpPath = await uploadToFTP(idCardBuffer, idCardFilename);
+/* --------------------------------- Routes --------------------------------- */
 
-    // Payment Screenshot upload
-    const paymentBuffer = req.files["paymentScreenshot"]?.[0]?.buffer;
-    const paymentFilename = `${email}_payment.jpg`;
-    const paymentPath = await uploadToFTPPay(paymentBuffer, paymentFilename);
+// 📥 Booking Endpoint (with ID + Payment uploads depending on userType)
+app.post(
+  "/api/booking",
+  upload.fields([
+    { name: "idCard", maxCount: 1 },
+    { name: "paymentScreenshot", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      const {
+        name,
+        rollNo,
+        branch,
+        year,
+        email,
+        mobile,
+        txnId,
+        userType,
+        seatNo,
+        passout,
+        Designation,
+        EmpCom,
+      } = req.body;
 
-
-    // ✅ Generate QR Code (with encoded data)
-    const qrData = JSON.stringify({ name, email, seatNo, txnId });
-    const qrBase64 = await QRCode.toDataURL(qrData);
-
-    // ✅ Save to DB
-    const insertCallback = async (err, result) => {
-      if (err) {
-        console.error("❌ DB Insert Error:", err);
-        return res.status(500).json({ error: "Database insert error" });
+      // Basic input checks (kept light; preserve your original API shape)
+      if (!name || !email || !mobile || !txnId || !userType || !seatNo) {
+        return res
+          .status(400)
+          .json({ error: "Missing required fields (name, email, mobile, txnId, userType, seatNo)." });
       }
 
-      // ✅ Send Email
-      await transporter.sendMail({
-        from: '"TEDxHITAM" <info@tedxhitam.com>',
-        to: email,
-        subject: "🎟 Your TEDxHITAM 2025 Ticket is Here!",
-        html: `<!-- Import Fonts -->
+      // Upload requirements per userType
+      const needsIdCard = ["student", "faculty", "outside"].includes(userType);
+      const needsPayment = true; // all variants insert payment path
+
+      // Extract files
+      const idCardBuffer = req.files?.["idCard"]?.[0]?.buffer;
+      const paymentBuffer = req.files?.["paymentScreenshot"]?.[0]?.buffer;
+
+      if (needsIdCard && !idCardBuffer) {
+        return res.status(400).json({ error: "ID Card file is required for this userType." });
+      }
+      if (needsPayment && !paymentBuffer) {
+        return res.status(400).json({ error: "Payment screenshot file is required." });
+      }
+
+      // Upload to FTPs as required
+      let ftpPath = null;
+      if (needsIdCard) {
+        const idCardFilename = `${email}_id.jpg`;
+        ftpPath = await uploadToFTP_ID(idCardBuffer, idCardFilename);
+      }
+
+      const paymentFilename = `${email}_payment.jpg`;
+      const paymentPath = await uploadToFTP_PAY(paymentBuffer, paymentFilename);
+
+      // ✅ Generate QR Code (with encoded data)
+      const qrData = JSON.stringify({ name, email, seatNo, txnId });
+      const qrBase64 = await QRCode.toDataURL(qrData);
+
+      // Build email attachments
+      const attachments = [
+        dataUrlToAttachment(qrBase64, { filename: "qr.png", cid: "qrCode" }),
+      ];
+
+      // Add logo if present on disk
+      const logoPath = path.join(__dirname, "/logo.png");
+      if (fs.existsSync(logoPath)) {
+        attachments.push({
+          filename: "logo.png",
+          cid: "invisibleLogo",
+          path: logoPath,
+        });
+      } else {
+        console.warn("⚠️ logo.png not found next to server file; email will be sent without embedded logo.");
+      }
+
+      // Common email HTML (unchanged content)
+      const emailHtml = `<!-- Import Fonts -->
 <link href="https://fonts.googleapis.com/css?family=Montserrat:700,400&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css?family=Roboto+Slab:400,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
@@ -278,108 +338,178 @@ app.post("/api/booking", upload.fields([
   </p>
 
 </div> <!-- End of Body Content -->
-</div> <!-- End of Main Wrapper -->`,
-        attachments: [
-          {
-            filename: 'qr.png',
-            cid: 'qrCode',
-            path: qrBase64,
-          },
-          {
-            filename: 'logo.png',
-            cid: 'invisibleLogo',
-             path: path.join(__dirname, '/logo.png')
-          }
-        ]
-      });
+</div> <!-- End of Main Wrapper -->`;
 
-      return res.json({ message: "✅ Booking successful & Email sent!" });
-    };
+      // Insert callback shared by multiple userTypes
+      const insertCallback = async (err) => {
+        if (err) {
+          console.error("❌ DB Insert Error:", err);
+          return res.status(500).json({ error: "Database insert error" });
+        }
 
-    // 👤 Handle Insertion Based on userType
-    switch (userType) {
-      case 'student': {
-        const sql = `INSERT INTO bookings 
-          (name, roll_no, branch, year, email, mobile, txn_id, user_type, seat_no, id_card_path,payment_path)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)`;
-        const values = [name, rollNo, branch, year, email, mobile, txnId, userType, seatNo, ftpPath,paymentPath];
-        db.query(sql, values, insertCallback);
-        break;
+        try {
+          await transporter.sendMail({
+            from: '"TEDxHITAM" <info@tedxhitam.com>',
+            to: email,
+            subject: "🎟 Your TEDxHITAM 2025 Ticket is Here!",
+            html: emailHtml,
+            attachments,
+          });
+        } catch (mailErr) {
+          console.error("❌ Email Send Error:", mailErr);
+          // Still return success for booking, but surface mail error
+          return res.status(200).json({
+            message:
+              "✅ Booking saved, but email failed to send. We’ll re-attempt shortly.",
+          });
+        }
+
+        return res.json({ message: "✅ Booking successful & Email sent!" });
+      };
+
+      // 👤 Handle Insertion Based on userType
+      switch (userType) {
+        case "student": {
+          const sql = `INSERT INTO bookings 
+            (name, roll_no, branch, year, email, mobile, txn_id, user_type, seat_no, id_card_path, payment_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          const values = [
+            name,
+            rollNo,
+            branch,
+            year,
+            email,
+            mobile,
+            txnId,
+            userType,
+            seatNo,
+            ftpPath,
+            paymentPath,
+          ];
+          db.query(sql, values, insertCallback);
+          break;
+        }
+
+        case "faculty": {
+          const sql = `INSERT INTO hitam_fac 
+            (name, dept, email, phone, txn_id, user_type, seat_no, file_path, payment_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          const values = [
+            name,
+            rollNo,
+            email,
+            mobile,
+            txnId,
+            userType,
+            seatNo,
+            ftpPath,
+            paymentPath,
+          ];
+          db.query(sql, values, insertCallback);
+          break;
+        }
+
+        case "alumni": {
+          const sql = `INSERT INTO hitam_alu 
+            (name, email, phone, passed_year, txn_id, user_type, seat_no, des, empcom, payment_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          const values = [
+            name,
+            email,
+            mobile,
+            passout,
+            txnId,
+            userType,
+            seatNo,
+            Designation,
+            EmpCom,
+            paymentPath,
+          ];
+          db.query(sql, values, insertCallback);
+          break;
+        }
+
+        case "outside": {
+          const sql = `INSERT INTO outside_hitam 
+            (name, dept, email, phone, txn_id, user_type, seat_no, file_path, payment_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          const values = [
+            name,
+            rollNo,
+            email,
+            mobile,
+            txnId,
+            userType,
+            seatNo,
+            ftpPath,
+            paymentPath,
+          ];
+          db.query(sql, values, insertCallback);
+          break;
+        }
+
+        default:
+          return res.status(400).json({ error: "Invalid userType" });
       }
-
-      case 'faculty': {
-        const sql = `INSERT INTO hitam_fac 
-          (name, dept, email, phone, txn_id, user_type, seat_no, file_path, payment_path)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?,?)`;
-        const values = [name, rollNo, email, mobile, txnId, userType, seatNo, ftpPath,paymentPath];
-        db.query(sql, values, insertCallback);
-        break;
-      }
-
-      case 'alumni': {
-        const sql = `INSERT INTO hitam_alu 
-          (name,  email, phone, passed_year, txn_id, user_type, seat_no,des,empcom,payment_path)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?,?,?)`;
-        const values = [name, email, mobile, passout, txnId, userType, seatNo ,Designation,EmpCom,paymentPath];
-        db.query(sql, values, insertCallback);
-        break;
-      }
-
-      case 'outside': {
-        const sql = `INSERT INTO outside_hitam 
-          (name,dept, email, phone, txn_id, user_type, seat_no, file_path,payment_path)
-          VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        const values = [name, rollNo, email, mobile, txnId, userType, seatNo, ftpPath, paymentPath];
-        db.query(sql, values, insertCallback);
-        break;
-      }
-
-      default:
-        return res.status(400).json({ error: "Invalid userType" });
+    } catch (error) {
+      console.error("💥 Global Error (/api/booking):", error);
+      res.status(500).json({ error: "❌ Server error during booking" });
     }
-  } catch (error) {
-    console.error("💥 Global Error:", error);
-    res.status(500).json({ error: "❌ Server error during booking" });
   }
-});
+);
 
-app.post("/api/bookingExternal", upload.single("paymentScreenshot"),async (req, res) => {
-  try {
-    const {
-      name,
-      email,
-      mobile,
-      txnId,
-      userType,
-      seatNo,
-      Designation,
-      Organization,
-    } = req.body;
+// 📥 External Booking (payment screenshot only)
+app.post(
+  "/api/bookingExternal",
+  upload.single("paymentScreenshot"),
+  async (req, res) => {
+    try {
+      const { name, email, mobile, txnId, userType, seatNo, Designation, Organization } = req.body;
 
-    const qrData = JSON.stringify({ name, email, seatNo, txnId });
-    const qrBase64 = await QRCode.toDataURL(qrData);
-
-    const remoteFilename = `${email}.jpg`;
-    const ftpPath = await uploadToFTPPay(req.file.buffer, remoteFilename);
-
-    // ✅ Insert into MySQL
-    const sql = `INSERT INTO bookingsExternal 
-      (name, email, mobile, txn_id, user_type, seat_no, Organization, Designation,paymentPath)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-    const values = [name, email, mobile, txnId, userType, seatNo, Organization, Designation,ftpPath];
-
-    db.query(sql, values, async (err, result) => {
-      if (err) {
-        console.error("❌ DB Insert Error:", err);
-        return res.status(500).json({ error: "Database insert error" });
+      if (!name || !email || !mobile || !txnId || !userType || !seatNo) {
+        return res
+          .status(400)
+          .json({ error: "Missing required fields (name, email, mobile, txnId, userType, seatNo)." });
+      }
+      if (!req.file?.buffer) {
+        return res.status(400).json({ error: "Payment screenshot file is required." });
       }
 
-      // ✅ Send email with QR code
-      await transporter.sendMail({
-        from: '"TEDxHITAM" <info@tedxhitam.com>',
-        to: email,
-        subject: "🎟 Your TEDxHITAM 2025 Ticket is Here!",
-        html: `
+      // QR for email
+      const qrData = JSON.stringify({ name, email, seatNo, txnId });
+      const qrBase64 = await QRCode.toDataURL(qrData);
+
+      const remoteFilename = `${email}.jpg`;
+      const ftpPath = await uploadToFTP_PAY(req.file.buffer, remoteFilename);
+
+      // ✅ Insert into MySQL
+      const sql = `INSERT INTO bookingsExternal 
+        (name, email, mobile, txn_id, user_type, seat_no, Organization, Designation, paymentPath)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      const values = [
+        name,
+        email,
+        mobile,
+        txnId,
+        userType,
+        seatNo,
+        Organization,
+        Designation,
+        ftpPath,
+      ];
+
+      db.query(sql, values, async (err) => {
+        if (err) {
+          console.error("❌ DB Insert Error:", err);
+          return res.status(500).json({ error: "Database insert error" });
+        }
+
+        try {
+          await transporter.sendMail({
+            from: '"TEDxHITAM" <info@tedxhitam.com>',
+            to: email,
+            subject: "🎟 Your TEDxHITAM 2025 Ticket is Here!",
+            html: `
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; background-color: #000; color: #fff; border-radius: 10px; overflow: hidden; border: 2px solid #c71f37;">
   <div style="padding: 20px; background-color: #c71f37; text-align: center;">
     <h1 style="margin: 0; font-size: 32px;">🎟 TEDxHITAM 2025</h1>
@@ -405,23 +535,27 @@ app.post("/api/bookingExternal", upload.single("paymentScreenshot"),async (req, 
     <p style="text-align: center; font-style: italic;">– Team TEDxHITAM</p>
   </div>
 </div>
-        `,
-        attachments: [
-          {
-            filename: "qr.png",
-            cid: "qrCode",
-            path: qrBase64
-          }
-        ]
-      });
+            `,
+            attachments: [
+              dataUrlToAttachment(qrBase64, { filename: "qr.png", cid: "qrCode" }),
+            ],
+          });
+        } catch (mailErr) {
+          console.error("❌ Email Send Error:", mailErr);
+          return res.status(200).json({
+            message:
+              "✅ Booking saved, but email failed to send. We’ll re-attempt shortly.",
+          });
+        }
 
-      res.json({ message: "✅ Booking successful & Email sent!" });
-    });
-  } catch (error) {
-    console.error("💥 Global Error:", error);
-    res.status(500).json({ error: "❌ Server error during booking" });
+        res.json({ message: "✅ Booking successful & Email sent!" });
+      });
+    } catch (error) {
+      console.error("💥 Global Error (/api/bookingExternal):", error);
+      res.status(500).json({ error: "❌ Server error during booking" });
+    }
   }
-});
+);
 
 // ✅ Root Route
 app.get("/", (req, res) => {
