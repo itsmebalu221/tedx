@@ -557,6 +557,45 @@ app.post(
   }
 );
 
+//Fetch Details
+app.get("/api/fetchDetails", (req, res) => {
+  const { email } = req.query;
+  if (!email) {
+    return res.status(400).json({ error: "Email query parameter is required" });
+  }
+
+  const tables = ["bookings", "bookingsExternal", "hitam_alu", "hitam_fac", "outside_hitam"];
+
+  // Recursive search function
+  function searchTable(index) {
+    if (index >= tables.length) {
+      return res.status(404).json({ error: "No booking found for this email" });
+    }
+
+    const table = tables[index];
+    const sql = `SELECT *, '${table}' AS source FROM ${table} WHERE email = ? LIMIT 1`;
+
+    db.query(sql, [email], (err, results) => {
+      if (err) {
+        console.error(`❌ Error searching ${table}:`, err);
+        return res.status(500).json({ error: "Database error" });
+      }
+
+      if (results.length > 0) {
+        // ✅ Found match → return immediately
+        return res.json({ booking: results[0] });
+      } else {
+        // ⏭️ Not found in this table → check next
+        searchTable(index + 1);
+      }
+    });
+  }
+
+  // Start searching from first table
+  searchTable(0);
+});
+
+
 // ✅ Root Route
 app.get("/", (req, res) => {
   res.send("🚀 TEDx API is live");
