@@ -25,7 +25,7 @@ const transporter = nodemailer.createTransport({
   secure: false,           // STARTTLS
   requireTLS: true,
   auth: {
-    user: "info@tedxhitam.com",
+    user: "invisible@tedxhitam.com",
     pass: "Hitam@2026",
   },
   tls: {
@@ -458,6 +458,53 @@ app.post(
   }
 );
 
+// Deactivate (set status = 0) for a given email across all booking tables
+// 📌 Simple Deactivate Route
+app.get("/api/deactivate", async (req, res) => {
+  const email = (req.body?.email || req.query?.email || "").trim();
+  if (!email) {
+    return res.status(400).json({ error: "Email is required" });
+  }
+
+  const tables = [
+    "bookings",
+    "bookingsExternal",
+    "hitam_alu",
+    "hitam_fac",
+    "outside_hitam",
+  ];
+
+  const results = [];
+
+  for (const table of tables) {
+    try {
+      const [result] = await db
+        .promise()
+        .query(`UPDATE \`${table}\` SET status = 1 WHERE email = ?`, [email]);
+
+      results.push({
+        table,
+        affectedRows: result.affectedRows,
+      });
+    } catch (err) {
+      // Skip if table doesn’t have "status" column
+      results.push({
+        table,
+        affectedRows: 0,
+        error: err.message,
+      });
+    }
+  }
+
+  res.json({
+    email,
+    results,
+    message: "Deactivate process completed",
+  });
+});
+
+
+
 // 📥 External Booking (payment screenshot only)
 app.post(
   "/api/bookingExternal",
@@ -595,11 +642,403 @@ app.get("/api/fetchDetails", (req, res) => {
   searchTable(0);
 });
 
+// Route to trigger bulk mail
+app.get("/send-mails", async (req, res) => {
+  try {
+    // Fetch recipients
+    const rows = await new Promise((resolve, reject) => {
+      db.query("SELECT email, name, mobile, txn_id, seat_no FROM bookings", (err, results) => {
+        if (err) return reject(err);
+        resolve(results);
+      });
+    });
+
+    let sentCount = 0;
+
+    for (const row of rows) {
+      // ✅ Generate QR per user
+      const qrData = JSON.stringify({
+        name: row.name,
+        email: row.email,
+        seatNo: row.seat_no,
+        txnId: row.txn_id,
+      });
+      const qrBase64 = await QRCode.toDataURL(qrData);
+
+      const mailOptions = {
+        from: '"TEDxHITAM" <invisible@tedxhitam.com>',
+        to: row.email,
+        subject: "🎟 Your TEDxHITAM 2025 Ticket is Here!",
+        html: `<!-- Import Fonts -->
+<link href="https://fonts.googleapis.com/css?family=Montserrat:700,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css?family=Roboto+Slab:400,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+<div style="font-family: 'Montserrat', Arial, sans-serif; max-width: 600px; margin: auto; background: linear-gradient(135deg, #181823 60%, #c71f37 100%); color: #fff; border-radius: 22px; overflow: hidden; border: 2.5px solid #c71f37; box-shadow: 0 8px 36px rgba(38,0,39,0.15);">
+
+<!-- Logo Section -->
+<div style="background: rgba(24,24,35,0.98);  text-align: center;">
+  <img src="cid:invisibleLogo" alt="Invisible TEDx Logo" style="width:400px; " />
+</div>
+
+<!-- Body Content -->
+<div style="padding: 36px 32px 34px 32px; background: rgba(24,24,35,0.98);">
+  <h2 style="margin: 0 0 14px; font-family: 'Roboto Slab', serif; font-weight:700; color: #ffdf4f; font-size: 23px;">
+    Hey ${row.name.split(" ")[0]}!
+  </h2>
+  <p style="font-size: 17px; color: #fff;">
+    Thank you for registering for the <b>3rd edition of TEDxHITAM</b>! Your booking is <b>confirmed</b>.
+  </p>
+
+  <!-- Theme Section -->
+  <section style="margin: 26px 0 22px;">
+    <h3 style="color: #c71f37; margin: 0 0 8px; font-family: 'Montserrat', Arial, sans-serif; font-weight:700; font-size:19px;">
+      About the Theme: INVISIBLE
+    </h3>
+    <p style="font-family:'Roboto Slab', serif; font-size:16px; line-height:1.8; color:#f4f4f4;">
+      This year, as HITAM celebrates
+      <span style="color:#ffdf4f;">25 years of academic excellence & transformative impact</span>,
+      TEDxHITAM 2025’s theme <b>‘Invisible’</b> shines a light on untold stories, silent efforts, and the hidden forces shaping remarkable outcomes.<br>
+      Let’s honor unseen thoughts, sacrifices, and endurance—the journey that truly builds success. It’s a tribute to people, choices, and challenges that make greatness possible behind the scenes.
+    </p>
+  </section>
+
+  <!-- Speaker Announcement -->
+  <div style="background:rgba(255,223,79,0.16); padding:12px 20px; border-radius:11px; text-align:center; margin:18px 0 10px 0;">
+    <span style="color:#ffdf4f; font-weight:700;">Meet Our Speakers at  <a href="https://tedxhitam.com/speakers" target="_blank" style="color:#fff; text-decoration:none;">tedxhitam.com/speakers</a> </span>
+  </div>
+  <div style="background:rgba(255,223,79,0.16); padding:12px 20px; border-radius:11px; text-align:center; margin:18px 0 10px 0;">
+    <span style="color:#ffdf4f; font-weight:700;">Dress Code :<a href="#" target="_blank" style="color:#fff; text-decoration:none;">Business Casuals</a></span>
+  </div>
+
+  <!-- Ticket Details Block -->
+  <div style="margin-top: 28px; text-align: left;">
+    <span style="display:inline-block; background:#c71f37; color:#fff; border-radius:9px 9px 0 0; padding:7px 20px; letter-spacing: 0.5px; font-family:'Montserrat', Arial, sans-serif; font-weight: 700; font-size: 16px;">
+      Your Ticket Details
+    </span>
+    <table style="margin: 0; width: 100%; font-size: 16px; background:#232342; color:#ebebeb; border-radius: 0 13px 13px 13px; overflow:hidden;">
+      <tr><td style="padding:12px 15px;"><strong>Name:</strong></td><td style="padding:12px 15px;">${row.name}</td></tr>
+      <tr><td style="padding:12px 15px;"><strong>Email:</strong></td><td style="padding:12px 15px;">${row.email}</td></tr>
+      <tr><td style="padding:12px 15px;"><strong>Mobile Number:</strong></td><td style="padding:12px 15px;">${row.phone}</td></tr>
+      <tr><td style="padding:12px 15px;"><strong>Seat Number:</strong></td><td style="padding:12px 15px;">${row.seat_no}</td></tr>
+      <tr><td style="padding:12px 15px;"><strong>Transaction ID:</strong></td><td style="padding:12px 15px;">${row.txn_id}</td></tr>
+    </table>
+  </div>
+
+  <!-- QR Code Block -->
+  <div style="text-align: center; margin: 32px 0 24px 0;">
+    <img src="cid:qrCode" alt="QR Code" style="width:200px; height:200px; border:4px solid #c71f37; border-radius: 18px; padding:5px; background:#fff; box-shadow:0 4px 16px rgba(199,31,55,0.13);" />
+    <p style="margin-top: 14px; font-size: 15px; font-family:'Montserrat', Arial, sans-serif; color:#ffdf4f;">
+      <b>Show this QR code at the registration desk</b>
+    </p>
+    <p style="margin-top: 8px; font-size: 14px; font-family:'Montserrat', Arial, sans-serif; color: rgba(199,31,55,0.7); font-style: italic; font-weight: 600;">
+      Please keep your QR code private—sharing it with others may compromise your entry.
+    </p>
+    <a 
+  href="https://chat.whatsapp.com/IwyizdjHjfIFdSdgVHax0j"
+  target="_blank"
+  style="display:inline-block; padding:12px 30px; border-radius:25px; background:linear-gradient(90deg,#c71f37,#181823); color:#fff; font-weight:700; text-decoration:none; font-family:'Montserrat',Arial,sans-serif; margin:12px auto; box-shadow:0 2px 8px rgba(199,31,55,0.2);"
+>
+  Join WhatsApp Group
+</a>
+    <a 
+  href="https://calendar.google.com/calendar/render?action=TEMPLATE&text=TEDxHITAM+2025+-+Invisible&dates=20250920T043000Z/20250920T103000Z&details=Join+us+for+TEDxHITAM's+3rd+edition+under+the+theme+'Invisible'.+Venue:+HITAM+Auditorium&location=HITAM+Auditorium&sf=true&output=xml"
+  target="_blank"
+  style="display:inline-block; padding:12px 30px; border-radius:25px; background:linear-gradient(90deg,#c71f37,#181823); color:#fff; font-weight:700; text-decoration:none; font-family:'Montserrat',Arial,sans-serif; margin:12px auto; box-shadow:0 2px 8px rgba(199,31,55,0.2);"
+>
+  Add to Calendar
+</a>
+  </div>
+  
+  
+   <div style="background:rgba(255,223,79,0.16); padding:12px 20px; border-radius:11px;  margin:18px 0 10px 0;">
+     <h3><u>Important Instructions</u></h3>
+    <span style="color:#ffdf4f; font-weight:700;">Registration Desk :<a href="#" target="_blank" style="color:#fff; text-decoration:none;">Located at G07A.
+</a></span><br><br>
+     <span style="color:#ffdf4f; font-weight:700;">Speaker Etiquette :<a href="#" target="_blank" style="color:#fff; text-decoration:none;"> We kindly request everyone to avoid cross-talks and unnecessary movement during sessions, as a gesture of respect towards the speakers.
+
+
+</a></span><br><br>
+     <span style="color:#ffdf4f; font-weight:700;">Room Access :<a href="#" target="_blank" style="color:#fff; text-decoration:none;"> The hall doors will remain closed while a speaker is on the stage.
+</a></span>
+
+     <span style="color:#ffdf4f; font-weight:700;">1. <a href="#" target="_blank" style="color:#fff; text-decoration:none;">All the students need to carry their college ID cards. 
+</a></span><br><br>
+     <span style="color:#ffdf4f; font-weight:700;">2. <a href="#" target="_blank" style="color:#fff; text-decoration:none;">Everyone must carry a valid govt ID proof.
+
+</a></span><br><br>
+
+ <span style="color:#ffdf4f; font-weight:700;">2. <a href="#" target="_blank" style="color:#fff; text-decoration:none;">Registration desks will be open from 9am. 
+</a></span><br><br>
+    
+  </div>
+
+  <!-- Event Info Card -->
+  <div style="font-family:'Montserrat', Arial, sans-serif; text-align: left;">
+    <span style="display:inline-block; background:#c71f37; color:#fff; border-radius:9px 9px 0 0; padding:8px 20px; letter-spacing: 0.5px; font-weight: 700; font-size: 16px;">
+      Event Details
+    </span>
+    <div style="background:#232342; color:#fff; border-radius:0 13px 13px 13px; padding:20px 25px; margin-bottom:18px; box-shadow: 0 5px 15px rgba(0,0,0,0.25);">
+      <div style="display:flex; align-items:center; margin-bottom:14px; font-size:16px;">
+        <i class="fas fa-calendar-days" style="color:#ffdf4f; font-size:18px; margin-right:15px; width:20px; text-align:center;"></i>
+        <span><b>Date:</b> <span style="color:#ffdf4f;">20th September 2025</span></span>
+      </div>
+      <div style="display:flex; align-items:center; margin-bottom:14px; font-size:16px;">
+        <i class="fas fa-clock" style="color:#ffdf4f; font-size:18px; margin-right:15px; width:20px; text-align:center;"></i>
+        <span><b>Time:</b> 10:00 AM onwards</span>
+      </div>
+      <div style="display:flex; align-items:center; font-size:16px;">
+        <i class="fas fa-map-marker-alt" style="color:#ffdf4f; font-size:18px; margin-right:15px; width:20px; text-align:center;"></i>
+        <span><b>Venue:</b> <span style="color:#c71f37; font-weight:bold;">HITAM Auditorium</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Social Links -->
+<p style="text-align:center; color:#aaa; font-size:15px; margin-top:18px;">
+  Follow us for instant updates:<br>
+  <b>
+    <a href="https://www.instagram.com/tedxhitam/" target="_blank" style="color:#c71f37; text-decoration:none;">
+      <i class="fab fa-instagram"></i> Instagram
+    </a>
+  </b>
+</p>
+
+  <!-- Vibrant Closing Section -->
+  <p style="text-align: center; font-size:18px; color:#ffdf4f; margin-top:24px; letter-spacing:0.6px;">
+    See you on <b>20th September!</b>
+  </p>
+  <p style="text-align: center; color: #aaa; font-size:16px; margin-bottom: 7px; font-family: 'Montserrat', Arial, sans-serif; letter-spacing: 0.7px;">
+    Not everything that shapes us is seen. Sometimes, the most powerful stories are <b>INVISIBLE</b>.
+  </p>
+  <p style="text-align: center; font-style: italic; color:#fff; font-family:'Roboto Slab', serif; font-size: 16px;">
+    – Team TEDxHITAM
+  </p>
+
+</div> <!-- End of Body Content -->
+</div> <!-- End of Main Wrapper -->`,
+        attachments: [
+          {
+            filename: "logo.png",
+            cid: "invisibleLogo",
+            path: path.join(__dirname, "/logo.png"),
+          },
+          {
+            filename: "qrcode.png",
+            content: qrBase64.split("base64,")[1],
+            encoding: "base64",
+            cid: "qrCode", // referenced in HTML
+          },
+        ],
+      };
+
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log(`✅${row.id} Sent to ${row.email}`);
+        sentCount++;
+      } catch (mailErr) {
+        console.error(`❌ ${row.id} Failed to send to ${row.email}:`, mailErr);
+      }
+    }
+
+    res.json({ message: `Bulk mail completed. Sent to ${sentCount}/${rows.length} users.` });
+  } catch (err) {
+    console.error("💥 Error in /send-mails:", err);
+    res.status(500).json({ error: "Bulk mail failed" });
+  }
+});
+
+app.get("/send-mails-org", async (req, res) => {
+  try {
+    // 🔹 Static email list
+    const rows = [
+  { email: "assistant.deanaccreditation@hitam.org" },
+  { email: "surendra@hitam.org" },
+  { email: "assistantdean.se@hitam.org" },
+  { email: "ashalatha.sh@hitam.org" },
+  { email: "dean.ce@hitam.org" },
+  { email: "dean.freshman@hitam.org" }
+];
+
+
+
+    let sentCount = 0;
+
+    for (const row of rows) {
+      const mailOptions = {
+        from:'"TEDxHITAM" <invisible@tedxhitam.com>',
+        to: row.email,
+        subject: "Invitation – TEDxHITAM 2025 Leadership Faculty",
+        html: `<!-- Import Fonts -->
+<link href="https://fonts.googleapis.com/css?family=Montserrat:700,400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css?family=Roboto+Slab:400,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+<div style="font-family: 'Montserrat', Arial, sans-serif; max-width: 600px; margin: auto; background: linear-gradient(135deg, #181823 60%, #c71f37 100%); color: #fff; border-radius: 22px; overflow: hidden; border: 2.5px solid #c71f37; box-shadow: 0 8px 36px rgba(38,0,39,0.15);">
+
+<!-- Body Content -->
+<div style="padding: 36px 32px 34px 32px; background: rgba(24,24,35,0.98);">
+  <h2 style="margin: 0 0 14px; font-family: 'Roboto Slab', serif; font-weight:700; color: #ffdf4f; font-size: 23px;">
+    Dear Esteemed Faculty Leader!
+  </h2>
+  <p style="font-size: 17px; color: #fff;">
+    As a distinguished member of the <b>HITAM Leadership Faculty</b>, we are honored to extend our heartfelt invitation to the <b>3rd edition</b> of TEDxHITAM 2025. Your presence and guidance are invaluable as we celebrate ideas worth spreading and inspire our academic community.
+  </p>
+
+  <!-- Special Recognition -->
+  <div style="background:rgba(199,31,55,0.2); padding:16px 20px; border-radius:11px; margin:20px 0; border-left: 4px solid #c71f37;">
+    <p style="margin:0; color:#ffdf4f; font-weight:700; font-size:16px;">
+     <svg xmlns="http://www.w3.org/2000/svg" 
+     width="20" height="20" viewBox="0 0 24 24" 
+     fill="#ffdf4f" style="margin-right:8px; vertical-align:middle;">
+  <path d="M12 .587l3.668 7.571 8.332 1.151-6.064 5.828 
+           1.48 8.276L12 18.896l-7.416 4.517 
+           1.48-8.276L0 9.309l8.332-1.151z"/>
+</svg>
+      Your leadership and mentorship have been the INVISIBLE foundation of our institution's success. We deeply appreciate your continued support!
+    </p>
+  </div>
+
+  <!-- Theme Section -->
+  <section style="margin: 26px 0 22px;">
+    <h3 style="color: #c71f37; margin: 0 0 8px; font-family: 'Montserrat', Arial, sans-serif; font-weight:700; font-size:19px;">
+      About the Theme: INVISIBLE
+    </h3>
+    <p style="font-family:'Roboto Slab', serif; font-size:16px; line-height:1.8; color:#f4f4f4;">
+      This year, as HITAM celebrates
+      <span style="color:#ffdf4f;">25 years of academic excellence & transformative impact</span>,
+      TEDxHITAM 2025's theme <b>'Invisible'</b> shines a light on untold stories, silent efforts, and the hidden forces shaping remarkable outcomes.<br>
+      Let's honor unseen thoughts, sacrifices, and endurance—the journey that truly builds success. It's a tribute to people, choices, and challenges that make greatness possible behind the scenes.
+    </p>
+  </section>
+
+  <!-- Speaker Announcement -->
+  <div style="background:rgba(255,223,79,0.16); padding:12px 20px; border-radius:11px; text-align:center; margin:18px 0 10px 0;">
+    <span style="color:#ffdf4f; font-weight:700;">Meet Our Speakers at <a href="https://tedxhitam.com/speakers" target="_blank" style="color:#fff; text-decoration:none;">tedxhitam.com/speakers</a></span>
+  </div>
+  
+  <div style="background:rgba(255,223,79,0.16); padding:12px 20px; border-radius:11px; text-align:center; margin:18px 0 10px 0;">
+    <span style="color:#ffdf4f; font-weight:700;">Dress Code: <span style="color:#fff;">Business Formal</span></span>
+  </div>
+
+  <!-- Calendar Button -->
+  <div style="text-align: center; margin: 32px 0 24px 0;">
+    <a 
+      href="https://calendar.google.com/calendar/render?action=TEMPLATE&text=TEDxHITAM+2025+-+Invisible&dates=20250920T043000Z/20250920T103000Z&details=TEDxHITAM's+3rd+edition+under+the+theme+'Invisible'.+Faculty+reception+at+9:30+AM.+Venue:+HITAM+Auditorium&location=HITAM+Auditorium&sf=true&output=xml"
+      target="_blank"
+      style="display:inline-block; padding:12px 30px; border-radius:25px; background:linear-gradient(90deg,#c71f37,#181823); color:#fff; font-weight:700; text-decoration:none; font-family:'Montserrat',Arial,sans-serif; margin:12px auto; box-shadow:0 2px 8px rgba(199,31,55,0.2);"
+    >
+      Add to Calendar
+    </a>
+  </div>
+  
+  <!-- Faculty Instructions -->
+  <div style="background:rgba(255,223,79,0.16); padding:20px; border-radius:11px; margin:24px 0;">
+    <h3 style="font-size:18px; margin-bottom:16px; text-decoration:underline;">Faculty Guidelines</h3>
+    
+    <div style="margin-bottom:12px;">
+      <span style="color:#ffdf4f; font-weight:700;">Faculty Reception: </span>
+      <span style="color:#fff;">9:30 AM at HITAM Auditorium</span>
+    </div>
+    
+
+    <div style="margin-bottom:12px;">
+      <span style="color:#ffdf4f; font-weight:700;">Reserved Seating: </span>
+      <span style="color:#fff;">Premium seating arrangements in the front rows</span>
+    </div>
+    
+    <div style="margin-bottom:12px;">
+      <span style="color:#ffdf4f; font-weight:700;">1. </span>
+      <span style="color:#fff;">Please carry your faculty ID for priority access</span>
+    </div>
+    
+    <div style="margin-bottom:12px;">
+      <span style="color:#ffdf4f; font-weight:700;">2. </span>
+      <span style="color:#fff;">Networking session with speakers post-event</span>
+    </div>
+    
+    <div>
+      <span style="color:#ffdf4f; font-weight:700;">3. </span>
+      <span style="color:#fff;">Your participation inspires students and fellow faculty</span>
+    </div>
+  </div>
+
+  <!-- Event Info Card -->
+  <div style="font-family:'Montserrat', Arial, sans-serif; text-align: left;">
+    <span style="display:inline-block; background:#c71f37; color:#fff; border-radius:9px 9px 0 0; padding:8px 20px; letter-spacing: 0.5px; font-weight: 700; font-size: 16px;">
+      Event Details
+    </span>
+    <div style="background:#232342; color:#fff; border-radius:0 13px 13px 13px; padding:20px 25px; margin-bottom:18px; box-shadow: 0 5px 15px rgba(0,0,0,0.25);">
+      <div style="display:flex; align-items:center; margin-bottom:14px; font-size:16px;">
+        <i class="fas fa-calendar-days" style="color:#ffdf4f; font-size:18px; margin-right:15px; width:20px; text-align:center;"></i>
+        <span><b>Date:</b> <span style="color:#ffdf4f;">20th September 2025</span></span>
+      </div>
+      <div style="display:flex; align-items:center; margin-bottom:14px; font-size:16px;">
+        <i class="fas fa-clock" style="color:#ffdf4f; font-size:18px; margin-right:15px; width:20px; text-align:center;"></i>
+        <span><b>Time:</b> 10:00 AM onwards</span>
+      </div>
+      <div style="display:flex; align-items:center; margin-bottom:14px; font-size:16px;">
+        <i class="fas fa-users" style="color:#ffdf4f; font-size:18px; margin-right:15px; width:20px; text-align:center;"></i>
+        <span><b>Faculty Reception:</b> 9:30 AM</span>
+      </div>
+      <div style="display:flex; align-items:center; font-size:16px;">
+        <i class="fas fa-map-marker-alt" style="color:#ffdf4f; font-size:18px; margin-right:15px; width:20px; text-align:center;"></i>
+        <span><b>Venue:</b> <span style="color:#c71f37; font-weight:bold;">HITAM Auditorium</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Social Links -->
+  <p style="text-align:center; color:#aaa; font-size:15px; margin-top:18px;">
+    Follow us for instant updates:<br>
+    <b>
+      <a href="https://www.instagram.com/tedxhitam/" target="_blank" style="color:#c71f37; text-decoration:none;">
+        <i class="fab fa-instagram"></i> Instagram
+      </a>
+    </b>
+  </p>
+
+  <!-- Closing Section -->
+  <p style="text-align: center; font-size:18px; color:#ffdf4f; margin-top:24px; letter-spacing:0.6px;">
+    Thank you for your distinguished leadership and continued excellence!
+  </p>
+  <p style="text-align: center; color: #aaa; font-size:16px; margin-bottom: 7px; font-family: 'Montserrat', Arial, sans-serif; letter-spacing: 0.7px;">
+    Your guidance and wisdom are the <b>INVISIBLE</b> pillars that elevate our institution.
+  </p>
+  <p style="text-align: center; font-style: italic; color:#fff; font-family:'Roboto Slab', serif; font-size: 16px;">
+    – Team TEDxHITAM
+  </p>
+
+</div> <!-- End of Body Content -->
+</div> <!-- End of Main Wrapper -->`,
+      };
+
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log(`✅ Sent to ${row.email}`);
+        sentCount++;
+      } catch (mailErr) {
+        console.error(`❌ Failed to send to ${row.email}:`, mailErr);
+      }
+    }
+
+    res.json({ message: `Bulk mail completed. Sent to ${sentCount}/${rows.length} members.` });
+  } catch (err) {
+    console.error("💥 Error in /send-mails:", err);
+    res.status(500).json({ error: "Bulk mail failed" });
+  }
+});
+
+
+
+
 
 // ✅ Root Route
 app.get("/", (req, res) => {
-  res.send("🚀 TEDx API is live");
+  res.send("🚀 TEDx API is live Now");
 });
+
+
 
 // ❌ 404 Handler
 app.use((req, res) => {
